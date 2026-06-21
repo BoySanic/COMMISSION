@@ -645,8 +645,14 @@ void init_conv_kernels() {
   TRY_CUDA(cudaMemcpy(device_kernel_0B_addr, temp_0B, sizeof(temp_0B), cudaMemcpyHostToDevice));
 }
 
+constexpr float kGradVecs1PrefilterThreshold = -12.0f;
+constexpr float kGradVecs1FinalThreshold      = -18.5f;
+
+constexpr float kGradVecs2PrefilterThreshold = -13.5f;
+constexpr float kGradVecs2FinalThreshold      = -20.0f;
+
 template <typename IndexT>
-__device__ __forceinline__ float score_center(
+__device__ __forceinline__ float score_center_2x2(
     const float conv_z0[513][6],
     const float conv_z1[513][6],
     const IndexT* idx0,
@@ -660,7 +666,7 @@ __device__ __forceinline__ float score_center(
 }
 
 template <typename IndexT>
-__device__ __forceinline__ float score_full(
+__device__ __forceinline__ float score_full_12(
     const float conv_z0[513][6],
     const float conv_z1[513][6],
     const IndexT* idx0,
@@ -785,10 +791,10 @@ __launch_bounds__(block_dim_x) void kernel(
         const uint16_t* cw0 = &w0[candidate];
         const uint16_t* cw1 = &w1[candidate];
 
-        const float gate = score_center(conv_z0, conv_z1, cw0, cw1);
-        if (gate >= -12.0f) {
-          const float score = score_full(conv_z0, conv_z1, cw0, cw1);
-          if (score > -18.5f) {
+        const float gate = score_center_2x2(conv_z0, conv_z1, cw0, cw1);
+        if (gate >= kGradVecs1PrefilterThreshold) {
+          const float score = score_full_12(conv_z0, conv_z1, cw0, cw1);
+          if (score > kGradVecs1FinalThreshold) {
             uint32_t res_idx = atomicAdd(outputs.len, 1);
             if (res_idx < outputs.max_len) {
               outputs.data[res_idx] = {seed_index, x + candidate * cell_size, z};
@@ -820,7 +826,7 @@ void run(
 
 namespace KernelFilterGradVecs2 {
 constexpr uint32_t block_dim_x = 128;
-constexpr uint32_t grid_width = 330;
+constexpr uint32_t grid_width = unbound ? 331 : (large_biomes ? 29 : 115); //checking full bounded world / full unbounded
 constexpr uint32_t threads_per_seed = grid_width * grid_width;
 constexpr uint32_t grid_half = grid_width / 2;
 
@@ -918,10 +924,10 @@ __launch_bounds__(block_dim_x) void kernel(
           idx1[i] = hoisted_idx_xy[1][i] + nz_masked;
         }
 
-        const float gate = score_center(conv_z0, conv_z1, idx0, idx1);
-        if (gate >= -13.5f) {
-          const float score = score_full(conv_z0, conv_z1, idx0, idx1);
-          if (score > -20.0f) {
+        const float gate = score_center_2x2(conv_z0, conv_z1, idx0, idx1);
+        if (gate >= kGradVecs2PrefilterThreshold) {
+          const float score = score_full_12(conv_z0, conv_z1, idx0, idx1);
+          if (score > kGradVecs2FinalThreshold) {
             uint32_t result_index = atomicAdd(outputs.len, 1);
             if (result_index < outputs.max_len) {
               outputs.data[result_index] = {input.seed_index, x, z};
@@ -1677,8 +1683,8 @@ void GpuThread::run() {
   Kernel2RunFunc filter_2_runs[] = {
       KernelFilter2::Template<-10500, 12, 8 * 1024, 256, 24, false, true, false>::run, 
       KernelFilter2::Template<-10500, 14, 8 * 1024, 1024, 110, false, true, false>::run,
-      KernelFilter2::Template<-10500, 18, 10 * 1024, 4096, 340, false, false, false>::run,
-      KernelFilter2::Template<-10500, 18, 10 * 1024, 16384, 1520, false, false, false>::run, // zajonc was here :D, use 1600 instead of 1520 because of colab shitty cpus
+      KernelFilter2::Template<-10500, 16, 10 * 1024, 4096, 340, false, false, false>::run,
+      KernelFilter2::Template<-10500, 18, 10 * 1024, 16384, 1540, false, false, false>::run, // zajonc was here :D, use 1600 instead of 1540 because of colab shitty cpus
   };
   std::vector<Filter2Stage> filter_2;
   {
@@ -1693,8 +1699,6 @@ void GpuThread::run() {
       filter_2.emplace_back(filter_2_runs[i], outputs, stage);
     }
   }
-
-  int print_interval = 4096;
 
   auto start = std::chrono::steady_clock::now();
 
@@ -1774,7 +1778,7 @@ void GpuThread::run() {
       }
     }
 
-    if ((i + 1) % print_interval == 0) {
+    if ((i + 1) % PRINT_INTERVAL == 0) {
       auto end = std::chrono::steady_clock::now();
       double host_total_time = std::chrono::duration_cast<std::chrono::nanoseconds>(end - start).count() * 1e-9;
 

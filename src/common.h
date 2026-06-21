@@ -14,6 +14,19 @@ constexpr bool large_biomes = true;
 #else
 constexpr bool large_biomes = false;
 #endif
+#ifndef OMISSION_UNBOUND
+#define OMISSION_UNBOUND 0
+#endif
+#if OMISSION_UNBOUND
+constexpr bool unbound = true;
+#else
+constexpr bool unbound = false;
+#endif
+
+#ifndef PRINT_INTERVAL
+#define PRINT_INTERVAL 256
+#endif
+
 constexpr std::array<char, 16> net_handshake { 'O', 'M', 'I', 'S', 'S', 'I', 'O', 'N', '-', 'G', 'P', 'U', ' ', large_biomes ? 'L' : 'S', 'B', '\n' };
 
 struct GpuOutput {
