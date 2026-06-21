@@ -609,21 +609,40 @@ struct SeedPos {
 constexpr int32_t large_biomes_pos_mul = large_biomes ? 4 : 1;
 
 #include "kernel_0A.h"
-__device__ float device_kernel_0A[2][6][6][16];
+__device__ float device_kernel_0A[6][6][16][2];
 static_assert(sizeof(host_kernel_0A) == sizeof(device_kernel_0A));
 
 #include "kernel_0B.h"
-__device__ float device_kernel_0B[2][6][6][16];
+__device__ float device_kernel_0B[6][6][16][2];
 static_assert(sizeof(host_kernel_0B) == sizeof(device_kernel_0B));
 
 void init_conv_kernels() {
+  float temp_0A[6][6][16][2];
+  for (int dny = 0; dny < 2; ++dny) {
+    for (int dnx = 0; dnx < 6; ++dnx) {
+      for (int dnz = 0; dnz < 6; ++dnz) {
+        for (int p = 0; p < 16; ++p) {
+          temp_0A[dnx][dnz][p][dny] = host_kernel_0A[dny][dnx][dnz][p];
+        }
+      }
+    }
+  }
   void *device_kernel_0A_addr;
   TRY_CUDA(cudaGetSymbolAddress(&device_kernel_0A_addr, device_kernel_0A));
-  TRY_CUDA(cudaMemcpy(device_kernel_0A_addr, host_kernel_0A, sizeof(host_kernel_0A), cudaMemcpyHostToDevice));
-
+  TRY_CUDA(cudaMemcpy(device_kernel_0A_addr, temp_0A, sizeof(temp_0A), cudaMemcpyHostToDevice));
+  float temp_0B[6][6][16][2];
+  for (int dny = 0; dny < 2; ++dny) {
+    for (int dnx = 0; dnx < 6; ++dnx) {
+      for (int dnz = 0; dnz < 6; ++dnz) {
+        for (int p = 0; p < 16; ++p) {
+          temp_0B[dnx][dnz][p][dny] = host_kernel_0B[dny][dnx][dnz][p];
+        }
+      }
+    }
+  }
   void *device_kernel_0B_addr;
   TRY_CUDA(cudaGetSymbolAddress(&device_kernel_0B_addr, device_kernel_0B));
-  TRY_CUDA(cudaMemcpy(device_kernel_0B_addr, host_kernel_0B, sizeof(host_kernel_0B), cudaMemcpyHostToDevice));
+  TRY_CUDA(cudaMemcpy(device_kernel_0B_addr, temp_0B, sizeof(temp_0B), cudaMemcpyHostToDevice));
 }
 
 namespace KernelFilterGradVecs1 {
@@ -636,12 +655,12 @@ __launch_bounds__(block_dim_x) void kernel(
     const KernelSeed1::Result* __restrict__ results)
 {
   __shared__ alignas(16) ImprovedNoise oct_0A;
-  __shared__ float shared_kernel_0A[2][6][6][16];
+  __shared__ alignas(16) float shared_kernel_0A[6][6][16][2];
 
   __shared__ float conv_z0[513][6];
   __shared__ float conv_z1[513][6];
 
-  __shared__ alignas(16) int32_t idx_xy[2][272];
+  __shared__ alignas(16) uint8_t idx_xy[2][272];
 
   const int32_t nz = threadIdx.x;
 
@@ -676,8 +695,8 @@ __launch_bounds__(block_dim_x) void kernel(
 #pragma unroll
         for (int32_t dnz = 0; dnz < 6; ++dnz) {
           const uint32_t p = p_z[dnz];
-          conv0 += shared_kernel_0A[0][dnx][dnz][p];
-          conv1 += shared_kernel_0A[1][dnx][dnz][p];
+          conv0 += shared_kernel_0A[dnx][dnz][p][0];
+          conv1 += shared_kernel_0A[dnx][dnz][p][1];
         }
 
         conv_z0[nz][dnx] = conv0;
@@ -692,9 +711,9 @@ __launch_bounds__(block_dim_x) void kernel(
     const int32_t ny = oct_0A.yo;
     const int32_t z_center = (2.5f - oct_0A.zo) * cell_size;
 
-    const int32_t idx_x = oct_0A.p[nz];
-    const int32_t v0 = oct_0A.p[(idx_x + ny) & 0xFF];
-    const int32_t v1 = oct_0A.p[(idx_x + ny + 1) & 0xFF];
+    const uint8_t idx_x = oct_0A.p[nz];
+    const uint8_t v0 = oct_0A.p[(idx_x + ny) & 0xFF];
+    const uint8_t v1 = oct_0A.p[(idx_x + ny + 1) & 0xFF];
     idx_xy[0][nz] = v0;
     idx_xy[1][nz] = v1;
 
@@ -708,24 +727,24 @@ __launch_bounds__(block_dim_x) void kernel(
     int32_t x = x_center;
     const int32_t z = z_center + nz * cell_size;
 
-    int4 c0_0 = *reinterpret_cast<const int4*>(&idx_xy[0][0]);
-    int4 c0_1 = *reinterpret_cast<const int4*>(&idx_xy[0][4]);
-    int4 c1_0 = *reinterpret_cast<const int4*>(&idx_xy[1][0]);
-    int4 c1_1 = *reinterpret_cast<const int4*>(&idx_xy[1][4]);
+    uchar4 c0_0 = *reinterpret_cast<const uchar4*>(&idx_xy[0][0]);
+    uchar4 c0_1 = *reinterpret_cast<const uchar4*>(&idx_xy[0][4]);
+    uchar4 c1_0 = *reinterpret_cast<const uchar4*>(&idx_xy[1][0]);
+    uchar4 c1_1 = *reinterpret_cast<const uchar4*>(&idx_xy[1][4]);
 
     for (int32_t nx = 0; nx < 256; nx += 8) {
-      int4 c0_2 = *reinterpret_cast<const int4*>(&idx_xy[0][nx + 8]);
-      int4 c0_3 = *reinterpret_cast<const int4*>(&idx_xy[0][nx + 12]);
-      int4 c1_2 = *reinterpret_cast<const int4*>(&idx_xy[1][nx + 8]);
-      int4 c1_3 = *reinterpret_cast<const int4*>(&idx_xy[1][nx + 12]);
+      uchar4 c0_2 = *reinterpret_cast<const uchar4*>(&idx_xy[0][nx + 8]);
+      uchar4 c0_3 = *reinterpret_cast<const uchar4*>(&idx_xy[0][nx + 12]);
+      uchar4 c1_2 = *reinterpret_cast<const uchar4*>(&idx_xy[1][nx + 8]);
+      uchar4 c1_3 = *reinterpret_cast<const uchar4*>(&idx_xy[1][nx + 12]);
 
-      int32_t w0[13];
+      uint16_t w0[13];
       w0[0] = c0_0.x + nz; w0[1] = c0_0.y + nz; w0[2] = c0_0.z + nz; w0[3] = c0_0.w + nz;
       w0[4] = c0_1.x + nz; w0[5] = c0_1.y + nz; w0[6] = c0_1.z + nz; w0[7] = c0_1.w + nz;
       w0[8] = c0_2.x + nz; w0[9] = c0_2.y + nz; w0[10] = c0_2.z + nz; w0[11] = c0_2.w + nz;
       w0[12] = c0_3.x + nz;
 
-      int32_t w1[13];
+      uint16_t w1[13];
       w1[0] = c1_0.x + nz; w1[1] = c1_0.y + nz; w1[2] = c1_0.z + nz; w1[3] = c1_0.w + nz;
       w1[4] = c1_1.x + nz; w1[5] = c1_1.y + nz; w1[6] = c1_1.z + nz; w1[7] = c1_1.w + nz;
       w1[8] = c1_2.x + nz; w1[9] = c1_2.y + nz; w1[10] = c1_2.z + nz; w1[11] = c1_2.w + nz;
@@ -787,17 +806,36 @@ constexpr uint32_t block_dim_x = 128;
 constexpr uint32_t grid_width = 330;
 constexpr uint32_t grid_half = grid_width / 2;
 constexpr uint32_t threads_per_seed = grid_width * grid_width;
-__global__
-__launch_bounds__(block_dim_x) void kernel(InputBuffer<SeedPos> inputs, OutputBuffer<SeedPos> outputs, KernelSeed1::Result *results) {
-  __shared__ alignas(16) ImprovedNoise oct_0B;
-  __shared__ float shared_kernel_0B[2][6][6][16];
-  __shared__ float conv_z[2][6][512];
+constexpr uint32_t warp_size = 32;
+constexpr uint32_t warps_per_block = block_dim_x / warp_size;
 
-  for (uint32_t i = threadIdx.x; i < sizeof(shared_kernel_0B) / sizeof(uint32_t); i += block_dim_x) {
+static_assert(block_dim_x % warp_size == 0);
+
+__global__
+__launch_bounds__(block_dim_x) void kernel(
+    InputBuffer<SeedPos> inputs,
+    OutputBuffer<SeedPos> outputs,
+    const KernelSeed1::Result* __restrict__ results)
+{
+  __shared__ alignas(16) ImprovedNoise oct_0B;
+  __shared__ alignas(16) float shared_kernel_0B[6][6][16][2];
+
+  __shared__ float conv_z[2][6][256];
+
+  __shared__ uint8_t perm_y0[256];
+  __shared__ uint8_t perm_y1[256];
+
+  for (uint32_t i = threadIdx.x; i < sizeof(shared_kernel_0B) / sizeof(uint32_t); i += blockDim.x) {
     reinterpret_cast<uint32_t *>(&shared_kernel_0B)[i] = reinterpret_cast<uint32_t *>(device_kernel_0B)[i];
   }
 
-  constexpr int32_t cell_size_0A = (int32_t)(1 / chosen_continentalness_config.octaves_a[0].input_factor) * 256;
+  constexpr int32_t cell_size_0A = (int32_t)(1.0f / chosen_continentalness_config.octaves_a[0].input_factor) * 256;
+  const float input_factor_b = chosen_continentalness_config.octaves_b[0].input_factor;
+  const int32_t grid_half_s = static_cast<int32_t>(grid_half);
+  const int32_t grid_width_s = static_cast<int32_t>(grid_width);
+
+  const int32_t lane = threadIdx.x & (warp_size - 1);
+  const int32_t warp = threadIdx.x >> 5;
 
   uint32_t inputs_len = *inputs.len;
   for (uint32_t input_index = blockIdx.x; input_index < inputs_len; input_index += gridDim.x) {
@@ -805,60 +843,115 @@ __launch_bounds__(block_dim_x) void kernel(InputBuffer<SeedPos> inputs, OutputBu
 
     __syncthreads();
     if (threadIdx.x < 17) {
-      reinterpret_cast<uint4 *>(&oct_0B)[threadIdx.x] = reinterpret_cast<const uint4 *>(&results[input.seed_index].continentalness_0B)[threadIdx.x];
+      reinterpret_cast<uint4 *>(&oct_0B)[threadIdx.x] =
+          reinterpret_cast<const uint4 *>(&results[input.seed_index].continentalness_0B)[threadIdx.x];
     }
     __syncthreads();
+
+    const int32_t ny = oct_0B.yo;
+
+    for (uint32_t i = threadIdx.x; i < 256; i += blockDim.x) {
+      const uint32_t px = oct_0B.p[i];
+      perm_y0[i] = oct_0B.p[(px + ny) & 0xFF];
+      perm_y1[i] = oct_0B.p[(px + ny + 1) & 0xFF];
+    }
+    __syncthreads();
+
     for (int32_t V = threadIdx.x; V < 256; V += blockDim.x) {
       uint32_t p_z[6];
 #pragma unroll
       for (int32_t dnz = 0; dnz < 6; dnz++) {
         p_z[dnz] = oct_0B.p[(V + dnz) & 0xFF] & 0xF;
       }
+
 #pragma unroll
-      for (int32_t dny = 0; dny < 2; dny++) {
+      for (int32_t dnx = 0; dnx < 6; dnx++) {
+        float conv0 = 0.0f;
+        float conv1 = 0.0f;
 #pragma unroll
-        for (int32_t dnx = 0; dnx < 6; dnx++) {
-          float conv = 0;
-#pragma unroll
-          for (int32_t dnz = 0; dnz < 6; dnz++) {
-            conv += shared_kernel_0B[dny][dnx][dnz][p_z[dnz]];
-          }
-          conv_z[dny][dnx][V] = conv;
-          conv_z[dny][dnx][V + 256] = conv;
+        for (int32_t dnz = 0; dnz < 6; dnz++) {
+          const uint32_t p = p_z[dnz];
+          conv0 += shared_kernel_0B[dnx][dnz][p][0];
+          conv1 += shared_kernel_0B[dnx][dnz][p][1];
         }
+        conv_z[0][dnx][V] = conv0;
+        conv_z[1][dnx][V] = conv1;
       }
     }
     __syncthreads();
 
-    int32_t ny = oct_0B.yo;
-    for (uint32_t tx = 0; tx < grid_width; tx++) {
-      int32_t tile_dx = (tx - grid_half) * cell_size_0A;
-      int32_t x = input.x + tile_dx;
-      int32_t nx = __float2int_rd(x * (float)chosen_continentalness_config.octaves_b[0].input_factor + oct_0B.xo - 2.0f);
-      int32_t hoisted_idx_xy[2][6];
-#pragma unroll
-      for (int32_t dnx = 0; dnx < 6; dnx++) {
-        int32_t idx_x = oct_0B.p[(nx + dnx) & 0xFF];
-#pragma unroll
-        for (int32_t dny = 0; dny < 2; dny++) {
-          hoisted_idx_xy[dny][dnx] = oct_0B.p[(idx_x + ny + dny) & 0xFF];
-        }
+    for (int32_t tx = warp; tx < grid_width_s; tx += warps_per_block) {
+      uint32_t idx0_pack0 = 0;
+      uint32_t idx0_pack1 = 0;
+      uint32_t idx1_pack0 = 0;
+      uint32_t idx1_pack1 = 0;
+
+      if (lane == 0) {
+        const int32_t tile_dx = (tx - grid_half_s) * cell_size_0A;
+        const int32_t x = input.x + tile_dx;
+        const int32_t nx = __float2int_rd(x * input_factor_b + oct_0B.xo - 2.0f);
+
+        const uint8_t i00 = perm_y0[(nx + 0) & 0xFF];
+        const uint8_t i01 = perm_y0[(nx + 1) & 0xFF];
+        const uint8_t i02 = perm_y0[(nx + 2) & 0xFF];
+        const uint8_t i03 = perm_y0[(nx + 3) & 0xFF];
+        const uint8_t i04 = perm_y0[(nx + 4) & 0xFF];
+        const uint8_t i05 = perm_y0[(nx + 5) & 0xFF];
+
+        const uint8_t j00 = perm_y1[(nx + 0) & 0xFF];
+        const uint8_t j01 = perm_y1[(nx + 1) & 0xFF];
+        const uint8_t j02 = perm_y1[(nx + 2) & 0xFF];
+        const uint8_t j03 = perm_y1[(nx + 3) & 0xFF];
+        const uint8_t j04 = perm_y1[(nx + 4) & 0xFF];
+        const uint8_t j05 = perm_y1[(nx + 5) & 0xFF];
+
+        idx0_pack0 = (uint32_t)i00 | ((uint32_t)i01 << 8) | ((uint32_t)i02 << 16) | ((uint32_t)i03 << 24);
+        idx0_pack1 = (uint32_t)i04 | ((uint32_t)i05 << 8);
+
+        idx1_pack0 = (uint32_t)j00 | ((uint32_t)j01 << 8) | ((uint32_t)j02 << 16) | ((uint32_t)j03 << 24);
+        idx1_pack1 = (uint32_t)j04 | ((uint32_t)j05 << 8);
       }
-      for (uint32_t tz = threadIdx.x; tz < grid_width; tz += blockDim.x) {
-        int32_t tile_dz = (tz - grid_half) * cell_size_0A;
-        int32_t z = input.z + tile_dz;
 
-        int32_t nz = __float2int_rd(z * (float)chosen_continentalness_config.octaves_b[0].input_factor + oct_0B.zo - 2.0f);
-        int32_t nz_masked = nz & 0xFF;
+      idx0_pack0 = __shfl_sync(0xFFFFFFFFu, idx0_pack0, 0);
+      idx0_pack1 = __shfl_sync(0xFFFFFFFFu, idx0_pack1, 0);
+      idx1_pack0 = __shfl_sync(0xFFFFFFFFu, idx1_pack0, 0);
+      idx1_pack1 = __shfl_sync(0xFFFFFFFFu, idx1_pack1, 0);
 
-        float conv = 0;
+      uint8_t idx0[6];
+      uint8_t idx1[6];
+
+      idx0[0] = (uint8_t)(idx0_pack0 & 0xFF);
+      idx0[1] = (uint8_t)((idx0_pack0 >> 8) & 0xFF);
+      idx0[2] = (uint8_t)((idx0_pack0 >> 16) & 0xFF);
+      idx0[3] = (uint8_t)((idx0_pack0 >> 24) & 0xFF);
+      idx0[4] = (uint8_t)(idx0_pack1 & 0xFF);
+      idx0[5] = (uint8_t)((idx0_pack1 >> 8) & 0xFF);
+
+      idx1[0] = (uint8_t)(idx1_pack0 & 0xFF);
+      idx1[1] = (uint8_t)((idx1_pack0 >> 8) & 0xFF);
+      idx1[2] = (uint8_t)((idx1_pack0 >> 16) & 0xFF);
+      idx1[3] = (uint8_t)((idx1_pack0 >> 24) & 0xFF);
+      idx1[4] = (uint8_t)(idx1_pack1 & 0xFF);
+      idx1[5] = (uint8_t)((idx1_pack1 >> 8) & 0xFF);
+
+      const int32_t tile_dx = (tx - grid_half_s) * cell_size_0A;
+      const int32_t x = input.x + tile_dx;
+
+      for (int32_t tz = lane; tz < grid_width_s; tz += warp_size) {
+        const int32_t tile_dz = (tz - grid_half_s) * cell_size_0A;
+        const int32_t z = input.z + tile_dz;
+
+        const int32_t nz = __float2int_rd(z * input_factor_b + oct_0B.zo - 2.0f);
+        const int32_t nz_masked = nz & 0xFF;
+
+        float conv = 0.0f;
 #pragma unroll
         for (int32_t dnx = 0; dnx < 6; dnx++) {
-          conv += conv_z[0][dnx][hoisted_idx_xy[0][dnx] + nz_masked];
+          conv += conv_z[0][dnx][(idx0[dnx] + nz_masked) & 0xFF];
         }
 #pragma unroll
         for (int32_t dnx = 0; dnx < 6; dnx++) {
-          conv += conv_z[1][dnx][hoisted_idx_xy[1][dnx] + nz_masked];
+          conv += conv_z[1][dnx][(idx1[dnx] + nz_masked) & 0xFF];
         }
 
         if (conv > -20.0f) {
@@ -868,11 +961,18 @@ __launch_bounds__(block_dim_x) void kernel(InputBuffer<SeedPos> inputs, OutputBu
           }
         }
       }
+
+      __syncwarp();
     }
   }
 }
 
-void run(InputBuffer<SeedPos> inputs, OutputBuffer<SeedPos> outputs, KernelSeed1::Result *results, cudaStream_t stream) {
+void run(
+    InputBuffer<SeedPos> inputs,
+    OutputBuffer<SeedPos> outputs,
+    const KernelSeed1::Result *results,
+    cudaStream_t stream)
+{
   kernel<<<2048, block_dim_x, 0, stream>>>(inputs, outputs, results);
   TRY_CUDA(cudaGetLastError());
 }
@@ -1611,7 +1711,7 @@ void GpuThread::run() {
       KernelFilter2::Template<-10500, 12, 8 * 1024, 256, 24, false, true, false>::run, 
       KernelFilter2::Template<-10500, 14, 8 * 1024, 1024, 110, false, true, false>::run,
       KernelFilter2::Template<-10500, 18, 10 * 1024, 4096, 340, false, false, false>::run,
-      KernelFilter2::Template<-10500, 18, 10 * 1024, 16384, 1440, false, false, false>::run, // zajonc was here :D, use 1565 instead of 1440 because of colab shitty cpus
+      KernelFilter2::Template<-10500, 18, 10 * 1024, 16384, 1440, false, false, false>::run, // zajonc was here :D, use 1600 instead of 1440 because of colab shitty cpus
   };
   std::vector<Filter2Stage> filter_2;
   {
@@ -1627,7 +1727,7 @@ void GpuThread::run() {
     }
   }
 
-  int print_interval = 256;
+  int print_interval = 512;
 
   auto start = std::chrono::steady_clock::now();
 

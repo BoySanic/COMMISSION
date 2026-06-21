@@ -10,7 +10,7 @@ std::optional<CpuOutput> process(Cubiomes *cubiomes, int32_t min_size, const Gpu
 
     cubiomes_apply_seed(cubiomes, input.seed);
 
-    int32_t range = 10000 * (large_biomes ? 4 : 1);
+    int32_t range = 12800 * (large_biomes ? 4 : 1);
 
     if (!cubiomes_test_monte_carlo(cubiomes, input.x, input.z, range, min_size, 0.999)) {
         // std::printf("Test %" PRIi64 " %" PRIi32 " %" PRIi32 " failed monteCarloBiomes\n", input.seed, input.x, input.z);
