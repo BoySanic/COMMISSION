@@ -378,7 +378,7 @@ __device__ float octave_yo_mod1(const XrsrRandomFork &noise_yo_fork) {
 }
 
 __global__ __launch_bounds__(threads_per_block) void kernel(uint64_t start_seed, OutputBuffer<uint64_t> outputs) {
-  constexpr float maxScore = 0.036f; // 0.045f, 0.035f, 0.03f, 0.025f  ==  1 in 2700, 9400, 26000, 54000
+  constexpr float maxScore = 0.038f; // 0.045f, 0.035f, 0.03f, 0.025f  ==  1 in 2700, 9400, 26000, 54000
 
   uint32_t index = blockIdx.x * blockDim.x + threadIdx.x;
   uint64_t seed = start_seed + index;
@@ -645,6 +645,36 @@ void init_conv_kernels() {
   TRY_CUDA(cudaMemcpy(device_kernel_0B_addr, temp_0B, sizeof(temp_0B), cudaMemcpyHostToDevice));
 }
 
+template <typename IndexT>
+__device__ __forceinline__ float score_center(
+    const float conv_z0[513][6],
+    const float conv_z1[513][6],
+    const IndexT* idx0,
+    const IndexT* idx1)
+{
+  return
+      conv_z0[idx0[2]][2] +
+      conv_z0[idx0[3]][3] +
+      conv_z1[idx1[2]][2] +
+      conv_z1[idx1[3]][3];
+}
+
+template <typename IndexT>
+__device__ __forceinline__ float score_full(
+    const float conv_z0[513][6],
+    const float conv_z1[513][6],
+    const IndexT* idx0,
+    const IndexT* idx1)
+{
+  float score = 0.0f;
+#pragma unroll
+  for (int i = 0; i < 6; ++i) {
+    score += conv_z0[idx0[i]][i];
+    score += conv_z1[idx1[i]][i];
+  }
+  return score;
+}
+
 namespace KernelFilterGradVecs1 {
 constexpr uint32_t block_dim_x = 256;
 
@@ -739,50 +769,32 @@ __launch_bounds__(block_dim_x) void kernel(
       uchar4 c1_3 = *reinterpret_cast<const uchar4*>(&idx_xy[1][nx + 12]);
 
       uint16_t w0[13];
-      w0[0] = c0_0.x + nz; w0[1] = c0_0.y + nz; w0[2] = c0_0.z + nz; w0[3] = c0_0.w + nz;
-      w0[4] = c0_1.x + nz; w0[5] = c0_1.y + nz; w0[6] = c0_1.z + nz; w0[7] = c0_1.w + nz;
-      w0[8] = c0_2.x + nz; w0[9] = c0_2.y + nz; w0[10] = c0_2.z + nz; w0[11] = c0_2.w + nz;
+      w0[0]  = c0_0.x + nz; w0[1]  = c0_0.y + nz; w0[2]  = c0_0.z + nz; w0[3]  = c0_0.w + nz;
+      w0[4]  = c0_1.x + nz; w0[5]  = c0_1.y + nz; w0[6]  = c0_1.z + nz; w0[7]  = c0_1.w + nz;
+      w0[8]  = c0_2.x + nz; w0[9]  = c0_2.y + nz; w0[10] = c0_2.z + nz; w0[11] = c0_2.w + nz;
       w0[12] = c0_3.x + nz;
 
       uint16_t w1[13];
-      w1[0] = c1_0.x + nz; w1[1] = c1_0.y + nz; w1[2] = c1_0.z + nz; w1[3] = c1_0.w + nz;
-      w1[4] = c1_1.x + nz; w1[5] = c1_1.y + nz; w1[6] = c1_1.z + nz; w1[7] = c1_1.w + nz;
-      w1[8] = c1_2.x + nz; w1[9] = c1_2.y + nz; w1[10] = c1_2.z + nz; w1[11] = c1_2.w + nz;
+      w1[0]  = c1_0.x + nz; w1[1]  = c1_0.y + nz; w1[2]  = c1_0.z + nz; w1[3]  = c1_0.w + nz;
+      w1[4]  = c1_1.x + nz; w1[5]  = c1_1.y + nz; w1[6]  = c1_1.z + nz; w1[7]  = c1_1.w + nz;
+      w1[8]  = c1_2.x + nz; w1[9]  = c1_2.y + nz; w1[10] = c1_2.z + nz; w1[11] = c1_2.w + nz;
       w1[12] = c1_3.x + nz;
 
-      float conv0 = 0.0f, conv1 = 0.0f, conv2 = 0.0f, conv3 = 0.0f;
-      float conv4 = 0.0f, conv5 = 0.0f, conv6 = 0.0f, conv7 = 0.0f;
-
 #pragma unroll
-      for (int32_t dnx = 0; dnx < 6; ++dnx) {
-        conv0 += conv_z0[w0[dnx + 0]][dnx]; conv0 += conv_z1[w1[dnx + 0]][dnx];
-        conv1 += conv_z0[w0[dnx + 1]][dnx]; conv1 += conv_z1[w1[dnx + 1]][dnx];
-        conv2 += conv_z0[w0[dnx + 2]][dnx]; conv2 += conv_z1[w1[dnx + 2]][dnx];
-        conv3 += conv_z0[w0[dnx + 3]][dnx]; conv3 += conv_z1[w1[dnx + 3]][dnx];
-        conv4 += conv_z0[w0[dnx + 4]][dnx]; conv4 += conv_z1[w1[dnx + 4]][dnx];
-        conv5 += conv_z0[w0[dnx + 5]][dnx]; conv5 += conv_z1[w1[dnx + 5]][dnx];
-        conv6 += conv_z0[w0[dnx + 6]][dnx]; conv6 += conv_z1[w1[dnx + 6]][dnx];
-        conv7 += conv_z0[w0[dnx + 7]][dnx]; conv7 += conv_z1[w1[dnx + 7]][dnx];
-      }
+      for (int candidate = 0; candidate < 8; ++candidate) {
+        const uint16_t* cw0 = &w0[candidate];
+        const uint16_t* cw1 = &w1[candidate];
 
-      const bool hit0 = (conv0 > -18.5f);
-      const bool hit1 = (conv1 > -18.5f);
-      const bool hit2 = (conv2 > -18.5f);
-      const bool hit3 = (conv3 > -18.5f);
-      const bool hit4 = (conv4 > -18.5f);
-      const bool hit5 = (conv5 > -18.5f);
-      const bool hit6 = (conv6 > -18.5f);
-      const bool hit7 = (conv7 > -18.5f);
-
-      if (hit0 | hit1 | hit2 | hit3 | hit4 | hit5 | hit6 | hit7) {
-        if (hit0) { uint32_t res_idx = atomicAdd(outputs.len, 1); if (res_idx < outputs.max_len) outputs.data[res_idx] = {seed_index, x, z}; }
-        if (hit1) { uint32_t res_idx = atomicAdd(outputs.len, 1); if (res_idx < outputs.max_len) outputs.data[res_idx] = {seed_index, x + cell_size, z}; }
-        if (hit2) { uint32_t res_idx = atomicAdd(outputs.len, 1); if (res_idx < outputs.max_len) outputs.data[res_idx] = {seed_index, x + 2 * cell_size, z}; }
-        if (hit3) { uint32_t res_idx = atomicAdd(outputs.len, 1); if (res_idx < outputs.max_len) outputs.data[res_idx] = {seed_index, x + 3 * cell_size, z}; }
-        if (hit4) { uint32_t res_idx = atomicAdd(outputs.len, 1); if (res_idx < outputs.max_len) outputs.data[res_idx] = {seed_index, x + 4 * cell_size, z}; }
-        if (hit5) { uint32_t res_idx = atomicAdd(outputs.len, 1); if (res_idx < outputs.max_len) outputs.data[res_idx] = {seed_index, x + 5 * cell_size, z}; }
-        if (hit6) { uint32_t res_idx = atomicAdd(outputs.len, 1); if (res_idx < outputs.max_len) outputs.data[res_idx] = {seed_index, x + 6 * cell_size, z}; }
-        if (hit7) { uint32_t res_idx = atomicAdd(outputs.len, 1); if (res_idx < outputs.max_len) outputs.data[res_idx] = {seed_index, x + 7 * cell_size, z}; }
+        const float gate = score_center(conv_z0, conv_z1, cw0, cw1);
+        if (gate >= -12.0f) {
+          const float score = score_full(conv_z0, conv_z1, cw0, cw1);
+          if (score > -18.5f) {
+            uint32_t res_idx = atomicAdd(outputs.len, 1);
+            if (res_idx < outputs.max_len) {
+              outputs.data[res_idx] = {seed_index, x + candidate * cell_size, z};
+            }
+          }
+        }
       }
 
       x += 8 * cell_size;
@@ -795,7 +807,12 @@ __launch_bounds__(block_dim_x) void kernel(
   }
 }
 
-void run(const InputBuffer<uint64_t> seeds, OutputBuffer<SeedPos> outputs, const KernelSeed1::Result *results, cudaStream_t stream) {
+void run(
+    const InputBuffer<uint64_t> seeds,
+    OutputBuffer<SeedPos> outputs,
+    const KernelSeed1::Result* __restrict__ results,
+    cudaStream_t stream)
+{
   kernel<<<2048, block_dim_x, 0, stream>>>(seeds, outputs, results);
   TRY_CUDA(cudaGetLastError());
 }
@@ -804,12 +821,8 @@ void run(const InputBuffer<uint64_t> seeds, OutputBuffer<SeedPos> outputs, const
 namespace KernelFilterGradVecs2 {
 constexpr uint32_t block_dim_x = 128;
 constexpr uint32_t grid_width = 330;
-constexpr uint32_t grid_half = grid_width / 2;
 constexpr uint32_t threads_per_seed = grid_width * grid_width;
-constexpr uint32_t warp_size = 32;
-constexpr uint32_t warps_per_block = block_dim_x / warp_size;
-
-static_assert(block_dim_x % warp_size == 0);
+constexpr uint32_t grid_half = grid_width / 2;
 
 __global__
 __launch_bounds__(block_dim_x) void kernel(
@@ -820,157 +833,110 @@ __launch_bounds__(block_dim_x) void kernel(
   __shared__ alignas(16) ImprovedNoise oct_0B;
   __shared__ alignas(16) float shared_kernel_0B[6][6][16][2];
 
-  __shared__ float conv_z[2][6][256];
+  __shared__ float conv_z0[513][6];
+  __shared__ float conv_z1[513][6];
 
-  __shared__ uint8_t perm_y0[256];
-  __shared__ uint8_t perm_y1[256];
-
-  for (uint32_t i = threadIdx.x; i < sizeof(shared_kernel_0B) / sizeof(uint32_t); i += blockDim.x) {
-    reinterpret_cast<uint32_t *>(&shared_kernel_0B)[i] = reinterpret_cast<uint32_t *>(device_kernel_0B)[i];
+  for (uint32_t i = threadIdx.x; i < 288; i += blockDim.x) {
+    reinterpret_cast<uint4*>(shared_kernel_0B)[i] =
+        reinterpret_cast<const uint4*>(device_kernel_0B)[i];
   }
 
   constexpr int32_t cell_size_0A = (int32_t)(1.0f / chosen_continentalness_config.octaves_a[0].input_factor) * 256;
   const float input_factor_b = chosen_continentalness_config.octaves_b[0].input_factor;
-  const int32_t grid_half_s = static_cast<int32_t>(grid_half);
-  const int32_t grid_width_s = static_cast<int32_t>(grid_width);
+  const int32_t grid_half_s = (int32_t)grid_half;
 
-  const int32_t lane = threadIdx.x & (warp_size - 1);
-  const int32_t warp = threadIdx.x >> 5;
-
-  uint32_t inputs_len = *inputs.len;
+  const uint32_t inputs_len = *inputs.len;
   for (uint32_t input_index = blockIdx.x; input_index < inputs_len; input_index += gridDim.x) {
-    SeedPos input = inputs.data[input_index];
+    const SeedPos input = inputs.data[input_index];
 
     __syncthreads();
+
     if (threadIdx.x < 17) {
-      reinterpret_cast<uint4 *>(&oct_0B)[threadIdx.x] =
-          reinterpret_cast<const uint4 *>(&results[input.seed_index].continentalness_0B)[threadIdx.x];
+      reinterpret_cast<uint4*>(&oct_0B)[threadIdx.x] =
+          reinterpret_cast<const uint4*>(&results[input.seed_index].continentalness_0B)[threadIdx.x];
     }
-    __syncthreads();
 
-    const int32_t ny = oct_0B.yo;
-
-    for (uint32_t i = threadIdx.x; i < 256; i += blockDim.x) {
-      const uint32_t px = oct_0B.p[i];
-      perm_y0[i] = oct_0B.p[(px + ny) & 0xFF];
-      perm_y1[i] = oct_0B.p[(px + ny + 1) & 0xFF];
-    }
     __syncthreads();
 
     for (int32_t V = threadIdx.x; V < 256; V += blockDim.x) {
       uint32_t p_z[6];
 #pragma unroll
-      for (int32_t dnz = 0; dnz < 6; dnz++) {
+      for (int32_t dnz = 0; dnz < 6; ++dnz) {
         p_z[dnz] = oct_0B.p[(V + dnz) & 0xFF] & 0xF;
       }
 
 #pragma unroll
-      for (int32_t dnx = 0; dnx < 6; dnx++) {
+      for (int32_t dnx = 0; dnx < 6; ++dnx) {
         float conv0 = 0.0f;
         float conv1 = 0.0f;
+
 #pragma unroll
-        for (int32_t dnz = 0; dnz < 6; dnz++) {
+        for (int32_t dnz = 0; dnz < 6; ++dnz) {
           const uint32_t p = p_z[dnz];
           conv0 += shared_kernel_0B[dnx][dnz][p][0];
           conv1 += shared_kernel_0B[dnx][dnz][p][1];
         }
-        conv_z[0][dnx][V] = conv0;
-        conv_z[1][dnx][V] = conv1;
+
+        conv_z0[V][dnx] = conv0;
+        conv_z1[V][dnx] = conv1;
+        conv_z0[V + 256][dnx] = conv0;
+        conv_z1[V + 256][dnx] = conv1;
       }
     }
+
     __syncthreads();
 
-    for (int32_t tx = warp; tx < grid_width_s; tx += warps_per_block) {
-      uint32_t idx0_pack0 = 0;
-      uint32_t idx0_pack1 = 0;
-      uint32_t idx1_pack0 = 0;
-      uint32_t idx1_pack1 = 0;
+    const int32_t ny = oct_0B.yo;
 
-      if (lane == 0) {
-        const int32_t tile_dx = (tx - grid_half_s) * cell_size_0A;
-        const int32_t x = input.x + tile_dx;
-        const int32_t nx = __float2int_rd(x * input_factor_b + oct_0B.xo - 2.0f);
+    for (uint32_t tx = 0; tx < grid_width; ++tx) {
+      const int32_t tile_dx = ((int32_t)tx - grid_half_s) * cell_size_0A;
+      const int32_t x = input.x + tile_dx;
+      const int32_t nx = __float2int_rd(x * input_factor_b + oct_0B.xo - 2.0f);
 
-        const uint8_t i00 = perm_y0[(nx + 0) & 0xFF];
-        const uint8_t i01 = perm_y0[(nx + 1) & 0xFF];
-        const uint8_t i02 = perm_y0[(nx + 2) & 0xFF];
-        const uint8_t i03 = perm_y0[(nx + 3) & 0xFF];
-        const uint8_t i04 = perm_y0[(nx + 4) & 0xFF];
-        const uint8_t i05 = perm_y0[(nx + 5) & 0xFF];
-
-        const uint8_t j00 = perm_y1[(nx + 0) & 0xFF];
-        const uint8_t j01 = perm_y1[(nx + 1) & 0xFF];
-        const uint8_t j02 = perm_y1[(nx + 2) & 0xFF];
-        const uint8_t j03 = perm_y1[(nx + 3) & 0xFF];
-        const uint8_t j04 = perm_y1[(nx + 4) & 0xFF];
-        const uint8_t j05 = perm_y1[(nx + 5) & 0xFF];
-
-        idx0_pack0 = (uint32_t)i00 | ((uint32_t)i01 << 8) | ((uint32_t)i02 << 16) | ((uint32_t)i03 << 24);
-        idx0_pack1 = (uint32_t)i04 | ((uint32_t)i05 << 8);
-
-        idx1_pack0 = (uint32_t)j00 | ((uint32_t)j01 << 8) | ((uint32_t)j02 << 16) | ((uint32_t)j03 << 24);
-        idx1_pack1 = (uint32_t)j04 | ((uint32_t)j05 << 8);
+      int32_t hoisted_idx_xy[2][6];
+#pragma unroll
+      for (int32_t dnx = 0; dnx < 6; ++dnx) {
+        const int32_t idx_x = oct_0B.p[(nx + dnx) & 0xFF];
+#pragma unroll
+        for (int32_t dny = 0; dny < 2; ++dny) {
+          hoisted_idx_xy[dny][dnx] = oct_0B.p[(idx_x + ny + dny) & 0xFF];
+        }
       }
 
-      idx0_pack0 = __shfl_sync(0xFFFFFFFFu, idx0_pack0, 0);
-      idx0_pack1 = __shfl_sync(0xFFFFFFFFu, idx0_pack1, 0);
-      idx1_pack0 = __shfl_sync(0xFFFFFFFFu, idx1_pack0, 0);
-      idx1_pack1 = __shfl_sync(0xFFFFFFFFu, idx1_pack1, 0);
-
-      uint8_t idx0[6];
-      uint8_t idx1[6];
-
-      idx0[0] = (uint8_t)(idx0_pack0 & 0xFF);
-      idx0[1] = (uint8_t)((idx0_pack0 >> 8) & 0xFF);
-      idx0[2] = (uint8_t)((idx0_pack0 >> 16) & 0xFF);
-      idx0[3] = (uint8_t)((idx0_pack0 >> 24) & 0xFF);
-      idx0[4] = (uint8_t)(idx0_pack1 & 0xFF);
-      idx0[5] = (uint8_t)((idx0_pack1 >> 8) & 0xFF);
-
-      idx1[0] = (uint8_t)(idx1_pack0 & 0xFF);
-      idx1[1] = (uint8_t)((idx1_pack0 >> 8) & 0xFF);
-      idx1[2] = (uint8_t)((idx1_pack0 >> 16) & 0xFF);
-      idx1[3] = (uint8_t)((idx1_pack0 >> 24) & 0xFF);
-      idx1[4] = (uint8_t)(idx1_pack1 & 0xFF);
-      idx1[5] = (uint8_t)((idx1_pack1 >> 8) & 0xFF);
-
-      const int32_t tile_dx = (tx - grid_half_s) * cell_size_0A;
-      const int32_t x = input.x + tile_dx;
-
-      for (int32_t tz = lane; tz < grid_width_s; tz += warp_size) {
-        const int32_t tile_dz = (tz - grid_half_s) * cell_size_0A;
+      for (uint32_t tz = threadIdx.x; tz < grid_width; tz += blockDim.x) {
+        const int32_t tile_dz = ((int32_t)tz - grid_half_s) * cell_size_0A;
         const int32_t z = input.z + tile_dz;
 
         const int32_t nz = __float2int_rd(z * input_factor_b + oct_0B.zo - 2.0f);
         const int32_t nz_masked = nz & 0xFF;
 
-        float conv = 0.0f;
+        int32_t idx0[6];
+        int32_t idx1[6];
 #pragma unroll
-        for (int32_t dnx = 0; dnx < 6; dnx++) {
-          conv += conv_z[0][dnx][(idx0[dnx] + nz_masked) & 0xFF];
-        }
-#pragma unroll
-        for (int32_t dnx = 0; dnx < 6; dnx++) {
-          conv += conv_z[1][dnx][(idx1[dnx] + nz_masked) & 0xFF];
+        for (int32_t i = 0; i < 6; ++i) {
+          idx0[i] = hoisted_idx_xy[0][i] + nz_masked;
+          idx1[i] = hoisted_idx_xy[1][i] + nz_masked;
         }
 
-        if (conv > -20.0f) {
-          uint32_t result_index = atomicAdd(outputs.len, 1);
-          if (result_index < outputs.max_len) {
-            outputs.data[result_index] = {input.seed_index, x, z};
+        const float gate = score_center(conv_z0, conv_z1, idx0, idx1);
+        if (gate >= -13.5f) {
+          const float score = score_full(conv_z0, conv_z1, idx0, idx1);
+          if (score > -20.0f) {
+            uint32_t result_index = atomicAdd(outputs.len, 1);
+            if (result_index < outputs.max_len) {
+              outputs.data[result_index] = {input.seed_index, x, z};
+            }
           }
         }
       }
-
-      __syncwarp();
     }
   }
 }
 
 void run(
-    InputBuffer<SeedPos> inputs,
+    const InputBuffer<SeedPos> inputs,
     OutputBuffer<SeedPos> outputs,
-    const KernelSeed1::Result *results,
+    const KernelSeed1::Result* __restrict__ results,
     cudaStream_t stream)
 {
   kernel<<<2048, block_dim_x, 0, stream>>>(inputs, outputs, results);
@@ -1621,6 +1587,7 @@ struct StageStats {
 
 std::pair<double, char> scale_si(double val) {
   std::pair<double, char> units[] = {
+      {1e12, 'T'},  
       {1e9, 'G'},
       {1e6, 'M'},
       {1e3, 'k'},
@@ -1711,7 +1678,7 @@ void GpuThread::run() {
       KernelFilter2::Template<-10500, 12, 8 * 1024, 256, 24, false, true, false>::run, 
       KernelFilter2::Template<-10500, 14, 8 * 1024, 1024, 110, false, true, false>::run,
       KernelFilter2::Template<-10500, 18, 10 * 1024, 4096, 340, false, false, false>::run,
-      KernelFilter2::Template<-10500, 18, 10 * 1024, 16384, 1440, false, false, false>::run, // zajonc was here :D, use 1600 instead of 1440 because of colab shitty cpus
+      KernelFilter2::Template<-10500, 18, 10 * 1024, 16384, 1520, false, false, false>::run, // zajonc was here :D, use 1600 instead of 1520 because of colab shitty cpus
   };
   std::vector<Filter2Stage> filter_2;
   {
@@ -1727,7 +1694,7 @@ void GpuThread::run() {
     }
   }
 
-  int print_interval = 512;
+  int print_interval = 4096;
 
   auto start = std::chrono::steady_clock::now();
 
