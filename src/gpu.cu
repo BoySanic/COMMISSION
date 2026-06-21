@@ -115,9 +115,9 @@ make_normal_noise_config(const NoiseParameters<N> &noise_parameters, const XrsrF
   return res;
 }
 
-constexpr auto continentalness_config = make_normal_noise_config(continentalness_parameters, hash_continentalness);
-constexpr auto continentalness_large_config = make_normal_noise_config(continentalness_large_parameters, hash_continentalness_large);
-constexpr auto chosen_continentalness_config = large_biomes ? continentalness_large_config : continentalness_config;
+__device__ constexpr auto continentalness_config = make_normal_noise_config(continentalness_parameters, hash_continentalness);
+__device__ constexpr auto continentalness_large_config = make_normal_noise_config(continentalness_large_parameters, hash_continentalness_large);
+__device__ constexpr auto chosen_continentalness_config = large_biomes ? continentalness_large_config : continentalness_config;
 __device__ constexpr auto device_chosen_continentalness_config = chosen_continentalness_config;
 
 struct GradDotTable {
